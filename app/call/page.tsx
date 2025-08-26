@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { FaPhoneSlash, FaMicrophone, FaMicrophoneSlash, FaVideo, FaVideoSlash } from "react-icons/fa";
 
 let AgoraRTC: any;
@@ -11,9 +12,10 @@ type RemoteTracks = {
     audioTrack?: any | null;
 };
 
-const CHANNEL = "global-room";
-
 export default function CallPage() {
+    const searchParams = useSearchParams();
+    const CHANNEL = searchParams.get("channelName") || `room-${Math.floor(Math.random() * 1000)}`;
+
     const [client, setClient] = useState<any>(null);
     const [joined, setJoined] = useState(false);
     const [joining, setJoining] = useState(false);
@@ -28,6 +30,7 @@ export default function CallPage() {
     const [remoteUsers, setRemoteUsers] = useState<Record<string | number, RemoteTracks>>({});
     const callTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+    // Initialize Agora client
     useEffect(() => {
         (async () => {
             const module = await import("agora-rtc-sdk-ng");
@@ -37,17 +40,14 @@ export default function CallPage() {
         })();
     }, []);
 
+    // Call timer
     useEffect(() => {
         if (joined) {
             setCallDuration(0);
-            callTimerRef.current = setInterval(() => {
-                setCallDuration((prev) => prev + 1);
-            }, 1000);
-        } else {
-            if (callTimerRef.current) {
-                clearInterval(callTimerRef.current);
-                callTimerRef.current = null;
-            }
+            callTimerRef.current = setInterval(() => setCallDuration(prev => prev + 1), 1000);
+        } else if (callTimerRef.current) {
+            clearInterval(callTimerRef.current);
+            callTimerRef.current = null;
         }
     }, [joined]);
 
@@ -59,20 +59,21 @@ export default function CallPage() {
     };
 
     const upsertRemote = useCallback((uid: string | number, patch: Partial<RemoteTracks>) => {
-        setRemoteUsers((prev) => ({
+        setRemoteUsers(prev => ({
             ...prev,
             [uid]: { uid, videoTrack: prev[uid]?.videoTrack ?? null, audioTrack: prev[uid]?.audioTrack ?? null, ...patch },
         }));
     }, []);
 
     const removeRemote = useCallback((uid: string | number) => {
-        setRemoteUsers((prev) => {
+        setRemoteUsers(prev => {
             const copy = { ...prev };
             delete copy[uid];
             return copy;
         });
     }, []);
 
+    // Join call
     const handleJoin = useCallback(async () => {
         if (!client || joined || joining) return;
         setJoining(true);
@@ -81,7 +82,6 @@ export default function CallPage() {
             const tempUid = Math.floor(Math.random() * 1_000_000);
             const tokenRes = await fetch(`/api/agora-token?channelName=${CHANNEL}&uid=${tempUid}`);
             const { token, appId } = await tokenRes.json();
-
             if (!token || !appId) return alert("Token or App ID missing");
 
             await client.join(appId, CHANNEL, token, tempUid);
@@ -117,14 +117,12 @@ export default function CallPage() {
         } finally {
             setJoining(false);
         }
-    }, [camOn, client, joined, joining, removeRemote, upsertRemote, callType]);
+    }, [client, joined, joining, upsertRemote, removeRemote, camOn, callType, CHANNEL]);
 
+    // Leave call
     const handleLeave = useCallback(async () => {
-        [localMicTrackRef.current, localCamTrackRef.current].forEach((t) => {
-            try {
-                t?.stop();
-                t?.close();
-            } catch {}
+        [localMicTrackRef.current, localCamTrackRef.current].forEach(t => {
+            try { t?.stop(); t?.close(); } catch {}
         });
         localMicTrackRef.current = null;
         localCamTrackRef.current = null;
@@ -138,6 +136,7 @@ export default function CallPage() {
         setCamOn(true);
     }, [client]);
 
+    // Toggle mic/cam
     const toggleMic = useCallback(async () => {
         const track = localMicTrackRef.current;
         if (!track) return;
@@ -158,9 +157,7 @@ export default function CallPage() {
     const remoteUser = useMemo(() => Object.values(remoteUsers)[0] || null, [remoteUsers]);
 
     const handleCallTypeChange = (type: 'video' | 'audio') => {
-        if (!joined) {
-            setCallType(type);
-        }
+        if (!joined) setCallType(type);
     };
 
     if (!client) return <div className="p-4 flex items-center justify-center min-h-screen bg-gray-900 text-white">Loading Agora client...</div>;
@@ -173,23 +170,23 @@ export default function CallPage() {
                     <div className="flex space-x-4">
                         <button
                             onClick={() => { handleCallTypeChange('video'); handleJoin(); }}
-                            className="flex items-center space-x-2 px-6 py-3 rounded-full text-lg font-semibold transition-colors duration-300 bg-blue-600 hover:bg-blue-700"
+                            className={`flex items-center space-x-2 px-6 py-3 rounded-full text-lg font-semibold transition-colors duration-300 ${callType==='video'?'bg-blue-600 hover:bg-blue-700':'bg-gray-700 hover:bg-gray-600'}`}
                         >
                             <FaVideo/>
-                            {joining ? "Joining..." : "Video Call"}
+                            <span>{joining && callType==='video' ? "Joining..." : "Video Call"}</span>
                         </button>
 
                         <button
                             onClick={() => { handleCallTypeChange('audio'); handleJoin(); }}
-                            className="flex items-center space-x-2 px-6 py-3 rounded-full text-lg font-semibold transition-colors duration-300 bg-gray-700 hover:bg-gray-600"
+                            className={`flex items-center space-x-2 px-6 py-3 rounded-full text-lg font-semibold transition-colors duration-300 ${callType==='audio'?'bg-blue-600 hover:bg-blue-700':'bg-gray-700 hover:bg-gray-600'}`}
                         >
                             <FaMicrophone/>
-                            {joining ? "Joining..." : "Audio Call"}
+                            <span>{joining && callType==='audio' ? "Joining..." : "Audio Call"}</span>
                         </button>
+                        {/*<button onClick={handleJoin} disabled={joining} className="px-8 py-4 rounded-full bg-green-500 text-white text-xl font-bold hover:bg-green-600 transition-colors duration-300">*/}
+                        {/*    {joining ? "Joining..." : "Join Call"}*/}
+                        {/*</button>*/}
                     </div>
-                    {/*<button onClick={handleJoin} disabled={joining} className="px-8 py-4 rounded-full bg-green-500 text-white text-xl font-bold hover:bg-green-600 transition-colors duration-300">*/}
-                    {/*    {joining ? "Joining..." : "Join Call"}*/}
-                    {/*</button>*/}
                 </div>
             ) : (
                 <div className="relative w-full h-full flex flex-col items-center justify-center">
@@ -199,9 +196,9 @@ export default function CallPage() {
                     </div>
 
                     <div className="flex-grow flex items-center justify-center relative w-full h-full">
-                        {remoteUser && remoteUser.videoTrack && callType === 'video' ? (
+                        {remoteUser && remoteUser.videoTrack && callType==='video' ? (
                             <div className="absolute inset-0 z-0">
-                                <RemoteVideo uid={remoteUser.uid} videoTrack={remoteUser.videoTrack} />
+                                <RemoteVideo uid={remoteUser.uid} videoTrack={remoteUser.videoTrack}/>
                             </div>
                         ) : (
                             <div className="absolute inset-0 flex items-center justify-center bg-gray-800 rounded-2xl">
@@ -209,22 +206,22 @@ export default function CallPage() {
                             </div>
                         )}
                         <div className="absolute bottom-4 right-4 z-10 w-40 h-28 md:w-56 md:h-36 rounded-xl overflow-hidden shadow-lg border-2 border-white">
-                            <div ref={localVideoRef} className="w-full h-full bg-black" />
+                            <div ref={localVideoRef} className="w-full h-full bg-black"/>
                             <span className="absolute bottom-1 left-1 text-xs bg-black/50 text-white px-2 py-0.5 rounded-full">You</span>
                         </div>
                     </div>
 
                     <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex gap-4 bg-gray-800/80 backdrop-blur-md px-6 py-3 rounded-full shadow-lg z-20">
-                        <button onClick={toggleMic} className="w-12 h-12 flex items-center justify-center rounded-full text-white transition-colors duration-300" style={{ backgroundColor: micOn ? '#4A5568' : '#F56565' }}>
-                            {micOn ? <FaMicrophoneSlash size={24} /> : <FaMicrophone size={24} />}
+                        <button onClick={toggleMic} className="w-12 h-12 flex items-center justify-center rounded-full text-white transition-colors duration-300" style={{backgroundColor: micOn ? '#4A5568' : '#F56565'}}>
+                            {micOn ? <FaMicrophoneSlash size={24}/> : <FaMicrophone size={24}/>}
                         </button>
-                        {callType === 'video' && (
-                            <button onClick={toggleCam} className="w-12 h-12 flex items-center justify-center rounded-full text-white transition-colors duration-300" style={{ backgroundColor: camOn ? '#4A5568' : '#F56565' }}>
-                                {camOn ? <FaVideoSlash size={24} /> : <FaVideo size={24} />}
+                        {callType==='video' && (
+                            <button onClick={toggleCam} className="w-12 h-12 flex items-center justify-center rounded-full text-white transition-colors duration-300" style={{backgroundColor: camOn ? '#4A5568' : '#F56565'}}>
+                                {camOn ? <FaVideoSlash size={24}/> : <FaVideo size={24}/>}
                             </button>
                         )}
                         <button onClick={handleLeave} className="w-12 h-12 flex items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors duration-300">
-                            <FaPhoneSlash size={24} />
+                            <FaPhoneSlash size={24}/>
                         </button>
                     </div>
                 </div>
@@ -239,15 +236,13 @@ function RemoteVideo({ uid, videoTrack }: { uid: string | number; videoTrack: an
     useEffect(() => {
         if (videoTrack && containerRef.current) {
             videoTrack.play(containerRef.current);
-            return () => {
-                try { videoTrack.stop(); } catch {}
-            };
+            return () => { try { videoTrack.stop(); } catch {} }
         }
     }, [videoTrack]);
 
     return (
         <div className="w-full h-full bg-black relative">
-            <div ref={containerRef} className="w-full h-full" />
+            <div ref={containerRef} className="w-full h-full"/>
             <span className="absolute left-4 top-4 text-sm px-3 py-1 bg-white/20 text-white rounded-full">Remote {String(uid)}</span>
         </div>
     );
